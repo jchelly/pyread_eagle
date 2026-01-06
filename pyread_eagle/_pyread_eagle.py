@@ -432,6 +432,13 @@ class EagleSnapshot(LocalOrRemoteFile):
             fname = "{:s}.{:d}.hdf5".format(
                 basename if basename else self.basename, ifile
             )
+
+            # Don't open files that don't contain any selected cells
+            first_key = self.first_key_in_file[itype][ifile]
+            last_key  = self.last_key_in_file[itype][ifile]
+            if not np.any(self.hashmap[first_key:last_key+1]):
+                continue
+
             with self.open_file(fname) as f:
                 if self.verbose:
                     print("  - Opened file {:d}".format(ifile))
@@ -475,13 +482,23 @@ class EagleSnapshot(LocalOrRemoteFile):
                     )
                     starts.append(int(self.first_in_cell[itype][ifile][interval[0]]))
                 if np.sum(counts) > 0:
-                    for start, count in zip(starts, counts):
-                        # the reading here is a current bottleneck
-                        dat = f[name][start : start + count]
+                    if isinstance(f, hdfstream.RemoteFile):
+                        # Reading from a remote file with hdfstream. Send a single request for all slices.
+                        slices = [np.s_[s:s+c,...] for s, c in zip(starts, counts)]
+                        dat = f[name].request_slices(slices)
                         if self.sampling_rate >= 1.0:
                             all_retval.append(dat)
                         else:
                             retval.append(dat)
+                    else:
+                        # Reading from a local HDF5 file
+                        for start, count in zip(starts, counts):
+                            # the reading here is a current bottleneck
+                            dat = f[name][start : start + count]
+                            if self.sampling_rate >= 1.0:
+                                all_retval.append(dat)
+                            else:
+                                retval.append(dat)
                 if self.sampling_rate < 1.0:
                     # cut file-by-file to conserve memory
                     retval = np.concatenate(retval)
