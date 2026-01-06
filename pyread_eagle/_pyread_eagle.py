@@ -1,6 +1,8 @@
 import h5py
+import hdfstream
 import numpy as np
 from functools import wraps
+import contextlib
 
 
 _random_seed = 1  # doesn't matter which, but ensure consistency
@@ -112,7 +114,7 @@ def _get_dataset_list(grp, prefix=""):
         ]
     else:
         for key in grp.keys():
-            if isinstance(grp[key], h5py._hl.group.Group):
+            if isinstance(grp[key], (h5py._hl.group.Group, hdfstream.RemoteGroup)):
                 all_dsets.extend(_get_dataset_list(grp, prefix=key))
             else:
                 all_dsets.append("/{:s}".format(key))
@@ -134,11 +136,31 @@ def check_open(method):
     return _check_open
 
 
-class EagleSnapshot(object):
+class LocalOrRemoteFile:
+    """
+    Mixin class used to open local or remote files
+    """
+    def set_directory(self, remote_dir=None):
+        self._remote_dir = remote_dir
+
+    def open_direct(self, filename):
+        if getattr(self, "_remote_dir", None) is None:
+            return h5py.File(filename, "r")
+        else:
+            return self._remote_dir[filename]
+
+    @contextlib.contextmanager
+    def open_file(self, filename):
+        with self.open_direct(filename) as f:
+            yield f
+
+
+class EagleSnapshot(LocalOrRemoteFile):
     """Class to represent an open Eagle snapshot"""
 
-    def __init__(self, fname, verbose=False):
+    def __init__(self, fname, verbose=False, remote_dir=None):
         """Open a new snapshot"""
+        self.set_directory(remote_dir)
         self.isclosed = False
         self.fname = fname
         self.verbose = verbose
@@ -147,7 +169,7 @@ class EagleSnapshot(object):
         self.sampling_rate = 1.0
         self.split_rank = -1
         self.split_size = -1
-        with h5py.File(self.fname, "r") as f:
+        with self.open_file(fname) as f:
             if self.verbose:
                 print("  - Opened file: {:s}".format(self.fname))
             self.boxsize = f["/Header"].attrs["BoxSize"]
@@ -197,15 +219,6 @@ class EagleSnapshot(object):
                 else None
                 for itype in range(6)
             ]
-        self.num_part_in_file = [
-            [None for ifile in range(self.numfiles)] for itype in range(6)
-        ]
-        for ifile in range(self.numfiles):
-            fname = "{:s}.{:d}.hdf5".format(self.basename, ifile)
-            with h5py.File(fname, "r") as f:
-                numpart_thisfile = f["/Header"].attrs["NumPart_ThisFile"]
-                for itype in range(6):
-                    self.num_part_in_file[itype][ifile] = numpart_thisfile[itype]
 
         # These two datasets different in each file
         self.part_per_cell = [
@@ -419,7 +432,7 @@ class EagleSnapshot(object):
             fname = "{:s}.{:d}.hdf5".format(
                 basename if basename else self.basename, ifile
             )
-            with h5py.File(fname, "r") as f:
+            with self.open_file(fname) as f:
                 if self.verbose:
                     print("  - Opened file {:d}".format(ifile))
                 try:
@@ -529,7 +542,7 @@ class EagleSnapshot(object):
             self.num_keys_in_file[itype][ifile] > 0
         ):
             fname = "{:s}.{:d}.hdf5".format(self.basename, ifile)
-            with h5py.File(fname, "r") as f:
+            with self.open_file(fname) as f:
                 hpath = "/HashTable/PartType{:d}/" "NumParticleInCell".format(itype)
                 self.part_per_cell[itype][ifile] = f[hpath][...]
                 self.first_in_cell[itype][ifile] = np.r_[
@@ -554,7 +567,6 @@ class EagleSnapshot(object):
         del self.first_key_in_file
         del self.last_key_in_file
         del self.num_keys_in_file
-        del self.num_part_in_file
         del self.part_per_cell
         del self.first_in_cell
         del self.num_datasets
@@ -574,11 +586,11 @@ class EagleSnapshot(object):
             if self.numpart_total[itype] == 0:
                 continue
             ifile = 0
-            while self.num_part_in_file[itype][ifile] == 0:
+            while self.num_keys_in_file[itype][ifile] == 0:
                 ifile += 1
             filename = "{:s}.{:d}.hdf5".format(self.basename, ifile)
             # open this file and record dataset names
-            with h5py.File(filename, "r") as f:
+            with self.open_file(filename) as f:
                 try:
                     g = f["/PartType{:d}".format(itype)]
                 except KeyError:

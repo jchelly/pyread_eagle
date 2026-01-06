@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "numpy",
     "h5py",
+    "hdfstream",
 ]
 
 [project.urls]
