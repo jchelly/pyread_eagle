@@ -24,6 +24,22 @@ Install from github:
 Alternately, pip can retrieve and install the version on github directly:
  - 'pip3 install git+https://github.com/kyleaoman/pyread_eagle.git'
 
+### Opening remote files
+
+This version has been modified to access snapshots via the [hdfstream](https://hdfstream-python.readthedocs.io/en/latest/index.html)
+web service. To open a remote file, set the optional `remote_dir` parameter to a hdfstream.RemoteDirectory object. E.g.
+```
+# Open the remote directory containing the snapshot data
+import hdfstream
+root = hdfstream.open("cosma","/")
+
+# Open an EAGLE snapshot
+# In this case the filename is assumed to be relative to the remote directory on the server.
+import pyread_eagle
+snap = pyread_eagle.EagleSnapshot("EAGLE/Fiducial_models/RefL0025N0376/snapshot_028_z000p000/snap_028_z000p000.0.hdf5", remote_dir=root)
+```
+You can then use the EagleSnapshot object as described below. Data will be downloaded from the server instead of being read from your local disk.
+
 ### Documentation
 
 The documentation below is adapted from the original [read_eagle readme file](https://github.com/jchelly/read_eagle/blob/master/README).
